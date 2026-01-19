@@ -198,7 +198,6 @@ def _log_uniform(rng, low, high, size):
 
 
 def main():
-    global NPIX
     scratch = os.environ.get("SCRATCH", "/pscratch/sd/t/tanting/diffusion")
     out_path = os.path.join(scratch, "dataset_v1.h5")
     os.makedirs(scratch, exist_ok=True)
@@ -207,7 +206,7 @@ def main():
     rng = np.random.default_rng(master_seed)
 
     wave = sqbase.fixed_R_dispersion(L_MIN, L_MAX, NPIX)
-    NPIX = wave.size
+    wave_size = wave.size
 
     z_qso = rng.uniform(2.0, 3.5, size=N_SAMPLES)
     snr_mean = _log_uniform(rng, SNR_MIN, SNR_MAX, size=N_SAMPLES)
@@ -235,21 +234,21 @@ def main():
     with h5py.File(out_path, "w") as h5:
         flux_raw_ds = h5.create_dataset(
             "flux_raw",
-            shape=(N_SAMPLES, 1, NPIX),
+            shape=(N_SAMPLES, 1, wave_size),
             dtype="f4",
-            chunks=(CHUNK_SIZE, 1, NPIX),
+            chunks=(CHUNK_SIZE, 1, wave_size),
         )
         flux_noisy_ds = h5.create_dataset(
             "flux_noisy",
-            shape=(N_SAMPLES, 1, NPIX),
+            shape=(N_SAMPLES, 1, wave_size),
             dtype="f4",
-            chunks=(CHUNK_SIZE, 1, NPIX),
+            chunks=(CHUNK_SIZE, 1, wave_size),
         )
         sigma_map_ds = h5.create_dataset(
             "sigma_map",
-            shape=(N_SAMPLES, 1, NPIX),
+            shape=(N_SAMPLES, 1, wave_size),
             dtype="f4",
-            chunks=(CHUNK_SIZE, 1, NPIX),
+            chunks=(CHUNK_SIZE, 1, wave_size),
         )
         meta_grp = h5.create_group("meta")
         z_ds = meta_grp.create_dataset("z", shape=(N_SAMPLES,), dtype="f4")
