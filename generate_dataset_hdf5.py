@@ -198,12 +198,16 @@ def _log_uniform(rng, low, high, size):
 
 
 def main():
+    global NPIX
     scratch = os.environ.get("SCRATCH", "/pscratch/sd/t/tanting/diffusion")
     out_path = os.path.join(scratch, "dataset_v1.h5")
     os.makedirs(scratch, exist_ok=True)
 
     master_seed = 20251031
     rng = np.random.default_rng(master_seed)
+
+    wave = sqbase.fixed_R_dispersion(L_MIN, L_MAX, NPIX)
+    NPIX = wave.size
 
     z_qso = rng.uniform(2.0, 3.5, size=N_SAMPLES)
     snr_mean = _log_uniform(rng, SNR_MIN, SNR_MAX, size=N_SAMPLES)
