@@ -5,14 +5,11 @@
 Generate a large QSO dataset into a single HDF5 file.
 
 Requirements:
-  - sim_script.py must be importable and provide:
-      * generate_qso_spectrum(wave, z_qso, ...)
-      * insert_dlas3(wave, z_dla, logNHI)
   - simqso available (for sqbase.fixed_R_dispersion)
 
 Output:
   - dataset_v1.h5 in $SCRATCH (or current directory if SCRATCH unset)
-  - datasets:
+  - datasets (fixed length 2000, interpolated to TARGET_WAVE_GRID):
       flux_raw   (N, 1, 2000)
       flux_noisy (N, 1, 2000)
       sigma_map  (N, 1, 2000)
@@ -21,12 +18,12 @@ Output:
 """
 
 import os
-import math
 import multiprocessing as mp
 
 import h5py
 import numpy as np
 from scipy.ndimage import gaussian_filter1d
+from scipy.interpolate import interp1d
 
 import sys
 from astropy.cosmology import Planck13
@@ -57,6 +54,7 @@ SNR_MAX = 10.0
 DLA_LOGNHI_MIN = 20.3
 DLA_LOGNHI_MAX = 22.0
 
+TARGET_WAVE_GRID = np.linspace(2000.0, 8000.0, 2000)
 
 _WAVE = None
 
@@ -172,8 +170,13 @@ def _init_worker():
     _WAVE = sqbase.fixed_R_dispersion(L_MIN, L_MAX, NPIX)
 
 
+def _interp_to_target(wave, arr):
+    f = interp1d(wave, arr, kind="linear", fill_value="extrapolate")
+    return f(TARGET_WAVE_GRID).astype(np.float32)
+
+
 def _worker(params):
-    idx, z_qso, snr_mean, has_dla, z_dla, logNHI, seed = params
+    z_qso, snr_mean, has_dla, z_dla, logNHI, seed = params
     rng = np.random.default_rng(seed)
 
     wave = _WAVE
@@ -190,7 +193,11 @@ def _worker(params):
         wave, spec_in, snr_mean=snr_mean, rng=rng
     )
 
-    return idx, flux_raw, flux_noisy, sigma_map, scale, z_qso, snr_mean, logNHI
+    flux_raw = _interp_to_target(wave, flux_raw)
+    flux_noisy = _interp_to_target(wave, flux_noisy)
+    sigma_map = _interp_to_target(wave, sigma_map)
+
+    return flux_raw, flux_noisy, sigma_map, scale, z_qso, snr_mean, logNHI
 
 
 def _log_uniform(rng, low, high, size):
@@ -246,8 +253,7 @@ def main():
     DLA_LOGNHI_MIN = float(args.dla_lognhi_min)
     DLA_LOGNHI_MAX = float(args.dla_lognhi_max)
 
-    wave = sqbase.fixed_R_dispersion(L_MIN, L_MAX, NPIX)
-    wave_size = wave.size
+    wave_size = TARGET_WAVE_GRID.size
 
     z_qso = rng.uniform(2.0, 3.5, size=N_SAMPLES)
     snr_mean = _log_uniform(rng, SNR_MIN, SNR_MAX, size=N_SAMPLES)
@@ -266,7 +272,7 @@ def main():
 
     seeds = rng.integers(0, 2**32 - 1, size=N_SAMPLES, dtype=np.uint32)
     params = [
-        (i, float(z_qso[i]), float(snr_mean[i]), bool(has_dla[i]), float(z_dla[i]), float(logNHI[i]), int(seeds[i]))
+        (float(z_qso[i]), float(snr_mean[i]), bool(has_dla[i]), float(z_dla[i]), float(logNHI[i]), int(seeds[i]))
         for i in range(N_SAMPLES)
     ]
 
@@ -312,42 +318,60 @@ def main():
             for result in pool.imap_unordered(_worker, params):
                 buffer.append(result)
                 if len(buffer) >= CHUNK_SIZE:
-                    buffer.sort(key=lambda r: r[0])
-                    for r in buffer:
-                        i, raw, noisy, sig, scale, zval, snrval, dlaval = r
-                        flux_raw_ds[i, 0, :] = raw
-                        flux_noisy_ds[i, 0, :] = noisy
-                        sigma_map_ds[i, 0, :] = sig
-                        scale_ds[i] = scale
-                        z_ds[i] = zval
-                        snr_ds[i] = snrval
-                        dla_ds[i] = dlaval
-                        if catalog_fh is not None:
+                    raw = np.stack([r[0] for r in buffer], axis=0)
+                    noisy = np.stack([r[1] for r in buffer], axis=0)
+                    sig = np.stack([r[2] for r in buffer], axis=0)
+                    scales = np.array([r[3] for r in buffer], dtype=np.float32)
+                    zs = np.array([r[4] for r in buffer], dtype=np.float32)
+                    snrs = np.array([r[5] for r in buffer], dtype=np.float32)
+                    dlas = np.array([r[6] for r in buffer], dtype=np.float32)
+
+                    end = written + raw.shape[0]
+                    flux_raw_ds[written:end, 0, :] = raw
+                    flux_noisy_ds[written:end, 0, :] = noisy
+                    sigma_map_ds[written:end, 0, :] = sig
+                    scale_ds[written:end] = scales
+                    z_ds[written:end] = zs
+                    snr_ds[written:end] = snrs
+                    dla_ds[written:end] = dlas
+
+                    if catalog_fh is not None:
+                        for i in range(written, end):
+                            j = i - written
                             catalog_fh.write(
-                                f"{i},{zval:.6f},{snrval:.6f},{dlaval:.6f},{scale:.6f}\n"
+                                f"{i},{zs[j]:.6f},{snrs[j]:.6f},{dlas[j]:.6f},{scales[j]:.6f}\n"
                             )
 
-                    written += len(buffer)
+                    written = end
                     print(f"[INFO] Wrote {written}/{N_SAMPLES} spectra")
                     buffer = []
 
         if buffer:
-            buffer.sort(key=lambda r: r[0])
-            for r in buffer:
-                i, raw, noisy, sig, scale, zval, snrval, dlaval = r
-                flux_raw_ds[i, 0, :] = raw
-                flux_noisy_ds[i, 0, :] = noisy
-                sigma_map_ds[i, 0, :] = sig
-                scale_ds[i] = scale
-                z_ds[i] = zval
-                snr_ds[i] = snrval
-                dla_ds[i] = dlaval
-                if catalog_fh is not None:
+            raw = np.stack([r[0] for r in buffer], axis=0)
+            noisy = np.stack([r[1] for r in buffer], axis=0)
+            sig = np.stack([r[2] for r in buffer], axis=0)
+            scales = np.array([r[3] for r in buffer], dtype=np.float32)
+            zs = np.array([r[4] for r in buffer], dtype=np.float32)
+            snrs = np.array([r[5] for r in buffer], dtype=np.float32)
+            dlas = np.array([r[6] for r in buffer], dtype=np.float32)
+
+            end = written + raw.shape[0]
+            flux_raw_ds[written:end, 0, :] = raw
+            flux_noisy_ds[written:end, 0, :] = noisy
+            sigma_map_ds[written:end, 0, :] = sig
+            scale_ds[written:end] = scales
+            z_ds[written:end] = zs
+            snr_ds[written:end] = snrs
+            dla_ds[written:end] = dlas
+
+            if catalog_fh is not None:
+                for i in range(written, end):
+                    j = i - written
                     catalog_fh.write(
-                        f"{i},{zval:.6f},{snrval:.6f},{dlaval:.6f},{scale:.6f}\n"
+                        f"{i},{zs[j]:.6f},{snrs[j]:.6f},{dlas[j]:.6f},{scales[j]:.6f}\n"
                     )
 
-            written += len(buffer)
+            written = end
             print(f"[INFO] Wrote {written}/{N_SAMPLES} spectra")
 
     if catalog_fh is not None:
