@@ -197,13 +197,54 @@ def _log_uniform(rng, low, high, size):
     return np.exp(rng.uniform(np.log(low), np.log(high), size=size))
 
 
+def parse_args():
+    import argparse
+
+    p = argparse.ArgumentParser(description="Generate QSO spectra into one HDF5 file.")
+    p.add_argument("--n-samples", type=int, default=N_SAMPLES)
+    p.add_argument("--chunk-size", type=int, default=CHUNK_SIZE)
+    p.add_argument("--r-out", type=float, default=R_OUT)
+    p.add_argument("--l-min", type=float, default=L_MIN)
+    p.add_argument("--l-max", type=float, default=L_MAX)
+    p.add_argument("--npix", type=int, default=NPIX)
+    p.add_argument("--min-sigma", type=float, default=MIN_SIGMA)
+    p.add_argument("--snr-min", type=float, default=SNR_MIN)
+    p.add_argument("--snr-max", type=float, default=SNR_MAX)
+    p.add_argument("--dla-lognhi-min", type=float, default=DLA_LOGNHI_MIN)
+    p.add_argument("--dla-lognhi-max", type=float, default=DLA_LOGNHI_MAX)
+    p.add_argument("--output-dir", type=str, default=None)
+    p.add_argument("--output-file", type=str, default=None)
+    p.add_argument("--catalog-dir", type=str, default=None)
+    return p.parse_args()
+
+
 def main():
+    args = parse_args()
     scratch = os.environ.get("SCRATCH", "/pscratch/sd/t/tanting/diffusion")
+    if args.output_dir:
+        scratch = args.output_dir
     out_path = os.path.join(scratch, "dataset_v1.h5")
+    if args.output_file:
+        out_path = args.output_file
+        scratch = os.path.dirname(out_path) or "."
     os.makedirs(scratch, exist_ok=True)
 
     master_seed = 20251031
     rng = np.random.default_rng(master_seed)
+
+    global R_OUT, L_MIN, L_MAX, NPIX, MIN_SIGMA, SNR_MIN, SNR_MAX, DLA_LOGNHI_MIN, DLA_LOGNHI_MAX
+    global N_SAMPLES, CHUNK_SIZE
+    N_SAMPLES = int(args.n_samples)
+    CHUNK_SIZE = int(args.chunk_size)
+    R_OUT = float(args.r_out)
+    L_MIN = float(args.l_min)
+    L_MAX = float(args.l_max)
+    NPIX = int(args.npix)
+    MIN_SIGMA = float(args.min_sigma)
+    SNR_MIN = float(args.snr_min)
+    SNR_MAX = float(args.snr_max)
+    DLA_LOGNHI_MIN = float(args.dla_lognhi_min)
+    DLA_LOGNHI_MAX = float(args.dla_lognhi_max)
 
     wave = sqbase.fixed_R_dispersion(L_MIN, L_MAX, NPIX)
     wave_size = wave.size
@@ -230,6 +271,14 @@ def main():
     ]
 
     nproc = os.cpu_count() or 1
+
+    catalog_path = None
+    catalog_fh = None
+    if args.catalog_dir:
+        os.makedirs(args.catalog_dir, exist_ok=True)
+        catalog_path = os.path.join(args.catalog_dir, "catalog.csv")
+        catalog_fh = open(catalog_path, "w", encoding="ascii", newline="")
+        catalog_fh.write("index,z,snr,dla_logNHI,scale_factor\n")
 
     with h5py.File(out_path, "w") as h5:
         flux_raw_ds = h5.create_dataset(
@@ -273,6 +322,10 @@ def main():
                         z_ds[i] = zval
                         snr_ds[i] = snrval
                         dla_ds[i] = dlaval
+                        if catalog_fh is not None:
+                            catalog_fh.write(
+                                f"{i},{zval:.6f},{snrval:.6f},{dlaval:.6f},{scale:.6f}\n"
+                            )
 
                     written += len(buffer)
                     print(f"[INFO] Wrote {written}/{N_SAMPLES} spectra")
@@ -289,10 +342,17 @@ def main():
                 z_ds[i] = zval
                 snr_ds[i] = snrval
                 dla_ds[i] = dlaval
+                if catalog_fh is not None:
+                    catalog_fh.write(
+                        f"{i},{zval:.6f},{snrval:.6f},{dlaval:.6f},{scale:.6f}\n"
+                    )
 
             written += len(buffer)
             print(f"[INFO] Wrote {written}/{N_SAMPLES} spectra")
 
+    if catalog_fh is not None:
+        catalog_fh.close()
+        print(f"[INFO] Wrote catalog: {catalog_path}")
     print(f"[INFO] Finished. Output: {out_path}")
 
 
