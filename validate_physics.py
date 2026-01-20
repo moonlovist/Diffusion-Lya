@@ -70,20 +70,22 @@ def compute_power_spectrum(flux):
 
 def curvature_stat(flux, eps=1e-6):
     log_flux = np.log(np.clip(flux, eps, None))
-    d1 = np.gradient(log_flux, axis=-1)
-    d2 = np.gradient(d1, axis=-1)
-    return d2
+    curv = np.zeros_like(log_flux)
+    curv[:, 1:-1] = log_flux[:, 2:] + log_flux[:, :-2] - 2.0 * log_flux[:, 1:-1]
+    curv[:, 0] = np.nan
+    curv[:, -1] = np.nan
+    return curv
 
 
 def lower_bound_fraction(curvature, n_pix, r_out=241.0, l_min=2000.0, l_max=8000.0):
     wave = np.linspace(l_min, l_max, n_pix)
-    loglam = np.log(wave)
-    dloglam = np.mean(np.diff(loglam))
-    sigma_loglam = 1.0 / (2.355 * r_out)
-    sigma_pix = sigma_loglam / dloglam
-    bound = -1.0 / (sigma_pix ** 2)
-    frac = np.mean(curvature < bound) * 100.0
-    return bound, frac
+    dlambda = np.gradient(wave)
+    sigma_angstrom = wave / (2.355 * r_out)
+    sigma_pix_arr = sigma_angstrom / dlambda
+    bound_arr = -1.0 / (sigma_pix_arr ** 2)
+    valid = ~np.isnan(curvature)
+    frac = np.mean((curvature < bound_arr[None, :]) & valid) * 100.0
+    return bound_arr, frac
 
 
 def main():
@@ -115,19 +117,21 @@ def main():
     # Curvature
     curv_real = curvature_stat(real_flat)
     curv_gen = curvature_stat(gen_flat)
-    bound, frac_real = lower_bound_fraction(curv_real, n_pix)
+    bound_arr, frac_real = lower_bound_fraction(curv_real, n_pix)
     _, frac_gen = lower_bound_fraction(curv_gen, n_pix)
+    wave = np.linspace(2000.0, 8000.0, n_pix)
 
     np.savez(
         args.out,
         x_real=real_flat.astype(np.float32),
         x_gen=gen_flat.astype(np.float32),
+        wave=wave.astype(np.float32),
         k=k.astype(np.float32),
         pk_real=pk_real.astype(np.float32),
         pk_gen=pk_gen.astype(np.float32),
         curv_real=curv_real.astype(np.float32),
         curv_gen=curv_gen.astype(np.float32),
-        bound=np.array([bound], dtype=np.float32),
+        bound=bound_arr.astype(np.float32),
         frac_real=np.array([frac_real], dtype=np.float32),
         frac_gen=np.array([frac_gen], dtype=np.float32),
     )
