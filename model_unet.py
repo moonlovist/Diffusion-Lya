@@ -63,12 +63,13 @@ class UNet1D(nn.Module):
         self.downsamples = nn.ModuleList()
 
         in_c = base_ch
-        for out_c in chs:
+        for i, out_c in enumerate(chs):
             self.down_blocks.append(ResBlock1D(in_c, out_c, time_dim, groups=groups))
             in_c = out_c
-
-        for _ in range(depth - 1):
-            self.downsamples.append(nn.Conv1d(in_c, in_c, kernel_size=4, stride=2, padding=1))
+            if i < depth - 1:
+                self.downsamples.append(
+                    nn.Conv1d(in_c, in_c, kernel_size=4, stride=2, padding=1)
+                )
 
         self.mid1 = ResBlock1D(in_c, in_c, time_dim, groups=groups)
         self.mid2 = ResBlock1D(in_c, in_c, time_dim, groups=groups)
