@@ -7,10 +7,6 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-
 from model_unet import UNet1D
 from solver import ddpm_step, linear_beta_schedule
 
@@ -25,7 +21,7 @@ def parse_args():
     p.add_argument("--timesteps", type=int, default=None)
     p.add_argument("--batch-size", type=int, default=50)
     p.add_argument("--seed", type=int, default=123)
-    p.add_argument("--out", type=str, default="validation_report.pdf")
+    p.add_argument("--out", type=str, default="validation_outputs.npz")
     return p.parse_args()
 
 
@@ -112,11 +108,6 @@ def main():
     real_flat = real_flux.reshape(real_flux.shape[0], -1)
     gen_flat = gen_flux.reshape(gen_flux.shape[0], -1)
 
-    # Flux PDF
-    all_vals = np.concatenate([real_flat.ravel(), gen_flat.ravel()])
-    vmin, vmax = np.percentile(all_vals, [0.5, 99.5])
-    bins = np.linspace(vmin, vmax, 80)
-
     # Power spectrum
     k, pk_real = compute_power_spectrum(real_flat)
     _, pk_gen = compute_power_spectrum(gen_flat)
@@ -127,56 +118,20 @@ def main():
     bound, frac_real = lower_bound_fraction(curv_real, n_pix)
     _, frac_gen = lower_bound_fraction(curv_gen, n_pix)
 
-    fig, axes = plt.subplots(1, 3, figsize=(15, 4.8))
-
-    axes[0].hist(
-        real_flat.ravel(), bins=bins, density=True, alpha=0.6, label="Real"
+    np.savez(
+        args.out,
+        x_real=real_flat.astype(np.float32),
+        x_gen=gen_flat.astype(np.float32),
+        k=k.astype(np.float32),
+        pk_real=pk_real.astype(np.float32),
+        pk_gen=pk_gen.astype(np.float32),
+        curv_real=curv_real.astype(np.float32),
+        curv_gen=curv_gen.astype(np.float32),
+        bound=np.array([bound], dtype=np.float32),
+        frac_real=np.array([frac_real], dtype=np.float32),
+        frac_gen=np.array([frac_gen], dtype=np.float32),
     )
-    axes[0].hist(
-        gen_flat.ravel(), bins=bins, density=True, alpha=0.6, label="Gen"
-    )
-    axes[0].set_title("Flux PDF")
-    axes[0].set_xlabel("Flux")
-    axes[0].set_ylabel("Probability Density")
-    axes[0].legend()
-
-    axes[1].plot(k, pk_real, label="Real")
-    axes[1].plot(k, pk_gen, label="Gen")
-    axes[1].set_title("Power Spectrum")
-    axes[1].set_xlabel("k (pixel$^{-1}$)")
-    axes[1].set_ylabel("P(k)")
-    axes[1].set_yscale("log")
-    axes[1].legend()
-
-    curv_all = np.concatenate([curv_real.ravel(), curv_gen.ravel()])
-    cmin, cmax = np.percentile(curv_all, [0.5, 99.5])
-    cbins = np.linspace(cmin, cmax, 80)
-    axes[2].hist(
-        curv_real.ravel(), bins=cbins, density=True, alpha=0.6, label="Real"
-    )
-    axes[2].hist(
-        curv_gen.ravel(), bins=cbins, density=True, alpha=0.6, label="Gen"
-    )
-    axes[2].axvline(bound, color="k", linestyle="--", linewidth=1.0, label="Lower bound")
-    axes[2].set_title("Curvature D = d2/dx2 log(F)")
-    axes[2].set_xlabel("D")
-    axes[2].set_ylabel("Probability Density")
-    axes[2].legend()
-    axes[2].text(
-        0.02,
-        0.98,
-        f"Violations (D < bound):\nReal {frac_real:.2f}% | Gen {frac_gen:.2f}%",
-        transform=axes[2].transAxes,
-        va="top",
-        ha="left",
-        fontsize=9,
-        bbox=dict(boxstyle="round", facecolor="white", alpha=0.8, edgecolor="0.7"),
-    )
-
-    fig.suptitle(f"Validation Report | lower bound D_min={bound:.3e}", fontsize=12)
-    fig.tight_layout()
-    fig.savefig(args.out)
-    print(f"[INFO] Saved report: {args.out}")
+    print(f"[INFO] Saved outputs: {args.out}")
 
 
 if __name__ == "__main__":
