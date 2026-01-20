@@ -34,7 +34,7 @@ def load_real_samples(h5_path, n_samples, seed):
         n_total = int(h5["flux_raw"].shape[0])
         n_use = min(n_samples, n_total)
         rng = np.random.default_rng(seed)
-        idx = rng.choice(n_total, size=n_use, replace=False)
+        idx = np.sort(rng.choice(n_total, size=n_use, replace=False))
         flux_raw = np.asarray(h5["flux_raw"][idx], dtype=np.float32)
         scale = np.asarray(h5["scale_factor"][idx], dtype=np.float32)
     flux_norm = flux_raw / scale[:, None, None]
